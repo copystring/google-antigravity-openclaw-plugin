@@ -55,7 +55,8 @@ receive the OpenClaw MCP bridge.
 ## Development
 
 The checked-in OpenClaw SDK version is the version used to compile this plugin.
-Before moving that pin, update the build and compatibility metadata together.
+The npm package version follows that same OpenClaw release version. Before
+moving the pin, update the package version and compatibility metadata together.
 `npm run build` checks that these values stay aligned.
 
 ```bash

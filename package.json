@@ -1,6 +1,6 @@
 {
   "name": "google-antigravity-openclaw-plugin",
-  "version": "1.0.0",
+  "version": "2026.9.6",
   "description": "OpenClaw CLI backend plugin for Google Antigravity",
   "main": "dist/openclaw-plugin.js",
   "types": "dist/openclaw-plugin.d.ts",

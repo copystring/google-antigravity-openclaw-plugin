@@ -6,8 +6,13 @@ const build = pkg.openclaw?.build;
 const compatibility = pkg.openclaw?.compat;
 const expectedRange = `>=${version}`;
 
-if (!version || build?.openclawVersion !== version || build?.pluginSdkVersion !== version) {
-  throw new Error('OpenClaw build and Plugin SDK versions must match the pinned devDependency.');
+if (
+  !version ||
+  pkg.version !== version ||
+  build?.openclawVersion !== version ||
+  build?.pluginSdkVersion !== version
+) {
+  throw new Error('Plugin, OpenClaw build, and Plugin SDK versions must match the pinned devDependency.');
 }
 if (
   compatibility?.pluginApi !== expectedRange ||

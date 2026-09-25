@@ -1,0 +1,80 @@
+{
+  "name": "google-antigravity-openclaw-plugin",
+  "version": "1.0.0",
+  "description": "OpenClaw CLI backend plugin for Google Antigravity",
+  "main": "dist/openclaw-plugin.js",
+  "types": "dist/openclaw-plugin.d.ts",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./src/openclaw-plugin.ts"
+    ],
+    "runtimeExtensions": [
+      "./dist/openclaw-plugin.js"
+    ],
+    "install": {
+      "npmSpec": "google-antigravity-openclaw-plugin",
+      "defaultChoice": "npm",
+      "minHostVersion": ">=2026.9.6"
+    },
+    "compat": {
+      "pluginApi": ">=2026.9.6",
+      "minGatewayVersion": ">=2026.9.6"
+    },
+    "build": {
+      "openclawVersion": "2026.9.6",
+      "pluginSdkVersion": "2026.9.6"
+    },
+    "release": {
+      "publishToClawHub": true,
+      "publishToNpm": true,
+      "bundleRuntimeDependencies": false
+    }
+  },
+  "scripts": {
+    "build": "tsc && node scripts/check-openclaw-version.mjs",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sibbl/google-antigravity-openclaw-plugin.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sibbl/google-antigravity-openclaw-plugin/issues"
+  },
+  "homepage": "https://github.com/sibbl/google-antigravity-openclaw-plugin#readme",
+  "keywords": [
+    "openclaw",
+    "plugin",
+    "antigravity",
+    "google",
+    "gemini",
+    "cli-backend"
+  ],
+  "author": "Antigravity ACP Contributors",
+  "license": "MIT",
+  "dependencies": {
+    "google-antigravity-acp": "^1.1.2 || ^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.9",
+    "openclaw": "2026.9.6",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.7"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.9.6"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  }
+}

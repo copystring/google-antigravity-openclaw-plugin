@@ -20,6 +20,8 @@ describe('OpenClaw plugin manifest', () => {
   it('uses the ACP package runtime executable', async () => {
     let backend: { config: { args: string[] } } | undefined;
     plugin.register({
+      registerProvider() {},
+      registerModelCatalogProvider() {},
       registerCliBackend(value: unknown) {
         backend = value as { config: { args: string[] } };
       },

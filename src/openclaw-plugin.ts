@@ -349,6 +349,7 @@ export function parseAntigravityJsonlEvent(line: string): ParsedEvent {
 function buildBackend(id: string = BACKEND_ID): Parameters<OpenClawPluginApi['registerCliBackend']>[0] {
   const cliPath = require.resolve('google-antigravity-acp/dist/one-shot-cli.js');
   const compactCliPath = fileURLToPath(new URL('./compact-cli.js', import.meta.url));
+  const normalCliPath = fileURLToPath(new URL('./normal-cli.js', import.meta.url));
 
   return {
     id,
@@ -418,6 +419,10 @@ function buildBackend(id: string = BACKEND_ID): Parameters<OpenClawPluginApi['re
       }
       if (ctx.toolAvailability) {
         args.push('--no-skip-permissions', '--disable-slash-commands');
+      } else {
+        // A process-level wrapper sees the final per-attempt MCP capture settings,
+        // unlike prepareExecution, which only sees the pre-capture bundle.
+        args[0] = normalCliPath;
       }
       const effort = ctx.thinkingLevel;
       if (effort === 'low' || effort === 'medium' || effort === 'high') {
@@ -438,7 +443,11 @@ function buildBackend(id: string = BACKEND_ID): Parameters<OpenClawPluginApi['re
           env: ctx.env,
         });
         return normalHome ? {
-          env: { HOME: normalHome.home },
+          env: {
+            HOME: normalHome.home,
+            OPENCLAW_ANTIGRAVITY_NORMAL_MCP_OVERLAY: '1',
+            OPENCLAW_ANTIGRAVITY_ORIGINAL_HOME: normalHome.sourceHome,
+          },
           cleanup: normalHome.cleanup,
         } : undefined;
       }

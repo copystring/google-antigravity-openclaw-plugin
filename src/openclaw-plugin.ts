@@ -1,4 +1,6 @@
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { validateNativeCompactionOutput } from './compact-protocol.js';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -367,6 +369,7 @@ export function parseAntigravityJsonlEvent(line: string): ParsedEvent {
 
 function buildBackend(): Parameters<OpenClawPluginApi['registerCliBackend']>[0] {
   const cliPath = require.resolve('google-antigravity-acp/dist/one-shot-cli.js');
+  const compactCliPath = fileURLToPath(new URL('./compact-cli.js', import.meta.url));
 
   return {
     id: BACKEND_ID,
@@ -376,6 +379,16 @@ function buildBackend(): Parameters<OpenClawPluginApi['registerCliBackend']>[0] 
     nativeToolMode: 'selectable',
     toolAvailabilityEnforcement: 'prepare-execution',
     ownsNativeCompaction: true,
+    manualCompaction: {
+      buildPrompt: (customInstructions) => {
+        if (customInstructions?.trim()) {
+          throw new Error('Native Antigravity compaction currently supports bare /compact only');
+        }
+        return '/compact';
+      },
+      input: 'stdin',
+      validateOutput: validateNativeCompactionOutput,
+    },
     liveTest: {
       defaultModelRef: `${BACKEND_ID}/${DEFAULT_MODEL}`,
       defaultImageProbe: false,
@@ -403,6 +416,16 @@ function buildBackend(): Parameters<OpenClawPluginApi['registerCliBackend']>[0] 
     },
     resolveExecutionArgs(ctx) {
       const args = [...ctx.baseArgs];
+      if (ctx.controlOperation === 'compact') {
+        if (!ctx.useResume || args[0] !== cliPath) {
+          throw new Error('Native Antigravity compaction requires a resumable CLI session');
+        }
+        if (ctx.toolAvailability?.native.length || ctx.toolAvailability?.openClaw.length) {
+          throw new Error('Native Antigravity compaction cannot run with exposed tools');
+        }
+        args[0] = compactCliPath;
+        return args;
+      }
       const zeroTools =
         ctx.toolAvailability?.native.length === 0 &&
         ctx.toolAvailability?.openClaw.length === 0;

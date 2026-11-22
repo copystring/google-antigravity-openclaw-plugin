@@ -35,5 +35,9 @@
   },
   "providers": [
     "google-antigravity-cli"
+  ],
+  "providerCatalogEntry": "./dist/provider-discovery.js",
+  "nonSecretAuthMarkers": [
+    "antigravity-local-session"
   ]
 }

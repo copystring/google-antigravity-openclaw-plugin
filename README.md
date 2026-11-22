@@ -122,3 +122,25 @@ Native compaction of a legacy conversation is not yet verified end to end.
 Do not treat compile or unit-test success as proof that the installed `agy`
 will confirm the checkpoint. Back up important conversations before manual
 native compaction.
+
+## Native CLI token accounting
+
+The official `agy` terminal `usage` block aggregates token consumption over
+internal model calls; it does **not** identify the current prompt-context size
+after a native `/compact`. OpenClaw 2026.11.6 interprets a plugin's JSONL
+`result.usage` as the latest model-call usage and marks its derived context
+snapshot fresh. Passing agy's aggregate counters through that field could
+make the chat display millions of context tokens against a smaller window.
+
+Until agy exposes an authoritative per-call prompt/context measurement, this
+plugin intentionally omits `usage` from OpenClaw JSONL result events. This
+prevents new unsupported context measurements, but also means OpenClaw cannot
+show reliable Antigravity per-turn token billing/usage numbers from this
+adapter. Older persisted context counters are not modified by installing
+the plugin; the Gateway may continue displaying them as stale/approximate
+until it obtains a trustworthy replacement. The native compact command
+still preserves the session and does not synthesize a fake token count.
+
+OpenClaw metadata fields such as `contextTokens` can reflect previously
+selected runtimes. The Gemini model-catalog context size is an estimate,
+not a value returned by the CLI's model discovery endpoint.

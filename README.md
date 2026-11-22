@@ -102,3 +102,23 @@ under the same Linux user as the Gateway. The CLI query can take time on a cold 
 Using private Google AI subscription quotas through a third-party OpenClaw
 integration may be outside Google's permitted usage; direct CLI transport
 does not change that policy.
+
+## Legacy native session compatibility
+
+The same plugin registers two CLI backend IDs:
+
+- `google-antigravity-cli`: the canonical runtime for new requests.
+- `antigravity-cli`: a compatibility alias for older cavi-ai-backed sessions.
+
+Both map to the single canonical model provider `google-antigravity-cli` and
+use the same native `agy` executable and manual compaction control command.
+This lets OpenClaw 2026.11.6 recognize a previously saved
+`cliSessionBindings['antigravity-cli']` when a session now selects
+`google-antigravity-cli/<model>`, without altering SQLite data or restarting
+the Gateway. The old `antigravity` plugin must remain **disabled** to avoid
+two active plugins claiming the same backend ID.
+
+Native compaction of a legacy conversation is not yet verified end to end.
+Do not treat compile or unit-test success as proof that the installed `agy`
+will confirm the checkpoint. Back up important conversations before manual
+native compaction.

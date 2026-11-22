@@ -282,12 +282,6 @@ type ParsedEvent =
       kind: 'result';
       text?: string;
       sessionId?: string;
-      usage?: {
-        input?: number;
-        output?: number;
-        cacheRead?: number;
-        total?: number;
-      };
       errorText?: string;
     }
   | { kind: 'sessionId'; sessionId: string }
@@ -332,10 +326,12 @@ export function parseAntigravityJsonlEvent(line: string): ParsedEvent {
     };
   }
   if (event.type === 'result') {
-    const usage =
-      event.usage && typeof event.usage === 'object'
-        ? (event.usage as Record<string, unknown>)
-        : undefined;
+    // agy result usage aggregates a whole native conversation/turn (including
+    // cache reads across internal model calls). OpenClaw JSONL result usage
+    // means the latest model call's prompt context. Forwarding agy's counters
+    // there can claim millions of tokens of active context after /compact.
+    // Until the CLI exposes an authoritative latest-call context measurement,
+    // omit this field rather than inventing a fresh context snapshot.
     return {
       kind: 'result',
       text: typeof event.text === 'string' ? event.text : undefined,
@@ -343,26 +339,6 @@ export function parseAntigravityJsonlEvent(line: string): ParsedEvent {
         typeof event.conversation_id === 'string'
           ? event.conversation_id
           : undefined,
-      usage: usage
-        ? {
-            input:
-              typeof usage.input_tokens === 'number'
-                ? usage.input_tokens
-                : undefined,
-            output:
-              typeof usage.output_tokens === 'number'
-                ? usage.output_tokens
-                : undefined,
-            cacheRead:
-              typeof usage.cache_read_tokens === 'number'
-                ? usage.cache_read_tokens
-                : undefined,
-            total:
-              typeof usage.total_tokens === 'number'
-                ? usage.total_tokens
-                : undefined,
-          }
-        : undefined,
       errorText: typeof event.error === 'string' ? event.error : undefined,
     };
   }

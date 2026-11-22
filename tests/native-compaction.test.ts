@@ -15,6 +15,8 @@ type Backend = {
 function backend(): Backend {
   let registered: Backend | undefined;
   plugin.register({
+    registerProvider() {},
+    registerModelCatalogProvider() {},
     registerCliBackend(value: unknown) { registered = value as Backend; },
   } as never);
   if (!registered) throw new Error('Missing CLI backend');

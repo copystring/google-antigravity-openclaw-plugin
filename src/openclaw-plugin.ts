@@ -20,6 +20,7 @@ import {
 } from 'openclaw/plugin-sdk/plugin-entry';
 
 const BACKEND_ID = 'google-antigravity-cli';
+const LEGACY_BACKEND_ID = 'antigravity-cli';
 const DEFAULT_MODEL = 'gemini-3.8-flash-low';
 const require = createRequire(import.meta.url);
 
@@ -368,12 +369,13 @@ export function parseAntigravityJsonlEvent(line: string): ParsedEvent {
   return null;
 }
 
-function buildBackend(): Parameters<OpenClawPluginApi['registerCliBackend']>[0] {
+function buildBackend(id: string = BACKEND_ID): Parameters<OpenClawPluginApi['registerCliBackend']>[0] {
   const cliPath = require.resolve('google-antigravity-acp/dist/one-shot-cli.js');
   const compactCliPath = fileURLToPath(new URL('./compact-cli.js', import.meta.url));
 
   return {
-    id: BACKEND_ID,
+    id,
+    // Legacy runs retain their original CLI backend id while sharing this provider.
     modelProvider: BACKEND_ID,
     bundleMcp: true,
     bundleMcpMode: 'gemini-system-settings',
@@ -503,5 +505,8 @@ export default definePluginEntry({
     api.registerProvider(makeAgyProvider());
     api.registerModelCatalogProvider(makeAgyModelCatalogProvider());
     api.registerCliBackend(buildBackend());
+    // Compatibility route for sessions bound to the retired cavi-ai backend.
+    // This registers no old model provider and does not rewrite session state.
+    api.registerCliBackend(buildBackend(LEGACY_BACKEND_ID));
   },
 });

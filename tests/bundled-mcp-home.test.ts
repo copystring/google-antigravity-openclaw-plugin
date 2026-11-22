@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import plugin, { prepareExactToolHome } from '../src/openclaw-plugin.js';
-import { convertBundledMcpServer, prepareNormalMcpHome } from '../src/bundled-mcp-home.js';
+import { convertBundledMcpServer, prepareNormalMcpHome, refreshNormalMcpHome } from '../src/bundled-mcp-home.js';
 
 type Prepared = {
   env?: Record<string, string>;
@@ -228,6 +228,51 @@ describe('normal bundled MCP forwarding into agy', () => {
     } finally {
       await f.cleanup();
     }
+  });
+
+  it('refreshes the rotated OpenClaw capture header just before an agy launch', async () => {
+    const f = await fixture();
+    let home: Awaited<ReturnType<typeof prepareNormalMcpHome>>;
+    try {
+      home = await prepareNormalMcpHome({
+        sourceHome: f.sourceHome, systemSettingsPath: f.settingsPath,
+        env: testEnv, temporaryRoot: f.root,
+      });
+      const original = JSON.parse(await readFile(f.settingsPath, 'utf8'));
+      original.mcpServers.openclaw.headers['x-openclaw-cli-capture-key'] = 'capture-rotation-A';
+      await writeFile(f.settingsPath, JSON.stringify(original));
+      await refreshNormalMcpHome({
+        home: home!.home, sourceHome: home!.sourceHome,
+        systemSettingsPath: f.settingsPath, env: testEnv,
+      });
+      const config = JSON.parse(await readFile(home!.configPath, 'utf8'));
+      expect(config.mcpServers.openclaw.headers['x-openclaw-cli-capture-key'])
+        .toBe('capture-rotation-A');
+      expect(config.mcpServers.manual).toEqual(f.manual.mcpServers.manual);
+      expect(config.mcpServers.thirdParty.headers['X-Api-Key']).toBe('remote-value');
+      expect(JSON.parse(await readFile(path.join(
+        f.configDir, 'mcp_config.json',
+      ), 'utf8'))).toEqual(f.manual);
+    } finally {
+      await home?.cleanup();
+      await f.cleanup();
+    }
+  });
+
+  it('routes unrestricted calls through the late capture wrapper only', () => {
+    const b = backend();
+    const baseArgs = [b.config.args[0], '--conversation', 'native-session-id'];
+    const normal = b.resolveExecutionArgs({
+      useResume: true, modelId: 'gemini-4-neon-high', baseArgs,
+    });
+    expect(normal[0]).toMatch(/normal-cli\.js$/);
+    expect(normal).toContain('native-session-id');
+    const exact = b.resolveExecutionArgs({
+      useResume: true, modelId: 'gemini-4-neon-high', baseArgs,
+      toolAvailability: { native: [], openClaw: ['get_goal'] },
+    });
+    expect(exact[0]).toBe(b.config.args[0]);
+    expect(exact).toContain('--no-skip-permissions');
   });
 
   it('preserves the /compact native control arguments', () => {

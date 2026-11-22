@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { validateNativeCompactionOutput } from './compact-protocol.js';
+import { makeAgyModelCatalogProvider, makeAgyProvider } from './agy-provider.js';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -499,6 +500,8 @@ export default definePluginEntry({
   name: 'Google Antigravity CLI',
   description: 'Run Google Antigravity as a native OpenClaw CLI model backend',
   register(api) {
+    api.registerProvider(makeAgyProvider());
+    api.registerModelCatalogProvider(makeAgyModelCatalogProvider());
     api.registerCliBackend(buildBackend());
   },
 });

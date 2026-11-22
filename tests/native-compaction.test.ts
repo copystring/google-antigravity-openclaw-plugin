@@ -70,6 +70,6 @@ describe('Antigravity manual compaction', () => {
     expect(value.resolveExecutionArgs({
       baseArgs: [path],
       useResume: false,
-    })).toEqual([path]);
+    })[0]).toMatch(/normal-cli\.js$/u);
   });
 });

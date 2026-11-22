@@ -416,7 +416,7 @@ function buildBackend(): Parameters<OpenClawPluginApi['registerCliBackend']>[0] 
     },
     resolveExecutionArgs(ctx) {
       const args = [...ctx.baseArgs];
-      if (ctx.controlOperation === 'compact') {
+      if ((ctx as typeof ctx & { controlOperation?: 'compact' }).controlOperation === 'compact') {
         if (!ctx.useResume || args[0] !== cliPath) {
           throw new Error('Native Antigravity compaction requires a resumable CLI session');
         }

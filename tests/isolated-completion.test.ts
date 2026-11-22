@@ -23,6 +23,8 @@ type Backend = {
 function createBackend(): Backend {
   let backend: Backend | undefined;
   plugin.register({
+    registerProvider() {},
+    registerModelCatalogProvider() {},
     registerCliBackend(value: unknown) {
       backend = value as Backend;
     },

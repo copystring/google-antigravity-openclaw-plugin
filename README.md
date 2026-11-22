@@ -67,3 +67,38 @@ npm run build
 
 The Plugin SDK is an experimental API; test this package against each OpenClaw
 release before lowering its minimum host version.
+
+## Dynamic model catalog and native login recognition
+
+The fork queries the already installed official Antigravity CLI:
+
+```bash
+agy --output-format json models
+```
+
+Only a successful response containing command.data.models can verify the native
+CLI session and publish a model catalog. OpenClaw does not import Google OAuth
+tokens or create a second account. The original CLI owns authentication.
+
+- The picker receives model IDs and names returned by agy, not hard-coded rows.
+- Results are cached for five minutes and in-flight lookups are shared.
+- An expired or temporarily unavailable CLI can reuse the last successful list,
+  but a failed probe cannot claim a new successful login.
+- The model-catalog manifest contains no hard-coded entitlement list.
+- No setup wizard, proxy, model router or global agent setting is added.
+- Model context metadata is a conservative compatibility estimate; the CLI
+  output does not publish context capacity information.
+
+Refresh the model catalog:
+
+```bash
+openclaw models list --provider google-antigravity-cli --refresh
+openclaw models status
+```
+
+If models do not appear, verify that agy --output-format json models works
+under the same Linux user as the Gateway. The CLI query can take time on a cold start.
+
+Using private Google AI subscription quotas through a third-party OpenClaw
+integration may be outside Google's permitted usage; direct CLI transport
+does not change that policy.

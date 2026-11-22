@@ -67,3 +67,109 @@ npm run build
 
 The Plugin SDK is an experimental API; test this package against each OpenClaw
 release before lowering its minimum host version.
+
+## Dynamic model catalog and native login recognition
+
+The fork queries the already installed official Antigravity CLI:
+
+```bash
+agy --output-format json models
+```
+
+Only a successful response containing command.data.models can verify the native
+CLI session and publish a model catalog. OpenClaw does not import Google OAuth
+tokens or create a second account. The original CLI owns authentication.
+
+- The picker receives model IDs and names returned by agy, not hard-coded rows.
+- Results are cached for five minutes and in-flight lookups are shared.
+- An expired or temporarily unavailable CLI can reuse the last successful list,
+  but a failed probe cannot claim a new successful login.
+- The model-catalog manifest contains no hard-coded entitlement list.
+- No setup wizard, proxy, model router or global agent setting is added.
+- Model context metadata is a conservative compatibility estimate; the CLI
+  output does not publish context capacity information.
+
+Refresh the model catalog:
+
+```bash
+openclaw models list --provider google-antigravity-cli --refresh
+openclaw models status
+```
+
+If models do not appear, verify that agy --output-format json models works
+under the same Linux user as the Gateway. The CLI query can take time on a cold start.
+
+Using private Google AI subscription quotas through a third-party OpenClaw
+integration may be outside Google's permitted usage; direct CLI transport
+does not change that policy.
+
+## Legacy native session compatibility
+
+The same plugin registers two CLI backend IDs:
+
+- `google-antigravity-cli`: the canonical runtime for new requests.
+- `antigravity-cli`: a compatibility alias for older cavi-ai-backed sessions.
+
+Both map to the single canonical model provider `google-antigravity-cli` and
+use the same native `agy` executable and manual compaction control command.
+This lets OpenClaw 2026.11.6 recognize a previously saved
+`cliSessionBindings['antigravity-cli']` when a session now selects
+`google-antigravity-cli/<model>`, without altering SQLite data or restarting
+the Gateway. The old `antigravity` plugin must remain **disabled** to avoid
+two active plugins claiming the same backend ID.
+
+Native compaction of a legacy conversation is not yet verified end to end.
+Do not treat compile or unit-test success as proof that the installed `agy`
+will confirm the checkpoint. Back up important conversations before manual
+native compaction.
+
+## Native CLI token accounting
+
+The official `agy` terminal `usage` block aggregates token consumption over
+internal model calls; it does **not** identify the current prompt-context size
+after a native `/compact`. OpenClaw 2026.11.6 interprets a plugin's JSONL
+`result.usage` as the latest model-call usage and marks its derived context
+snapshot fresh. Passing agy's aggregate counters through that field could
+make the chat display millions of context tokens against a smaller window.
+
+Until agy exposes an authoritative per-call prompt/context measurement, this
+plugin intentionally omits `usage` from OpenClaw JSONL result events. This
+prevents new unsupported context measurements, but also means OpenClaw cannot
+show reliable Antigravity per-turn token billing/usage numbers from this
+adapter. Older persisted context counters are not modified by installing
+the plugin; the Gateway may continue displaying them as stale/approximate
+until it obtains a trustworthy replacement. The native compact command
+still preserves the session and does not synthesize a fake token count.
+
+OpenClaw metadata fields such as `contextTokens` can reflect previously
+selected runtimes. The Gemini model-catalog context size is an estimate,
+not a value returned by the CLI's model discovery endpoint.
+
+## Unrestricted Antigravity MCP bridging
+
+For ordinary turns, OpenClaw 2026.11.6 bundles the enabled OpenClaw MCP
+loopback server and user MCP servers into the JSON file referenced by
+`GEMINI_CLI_SYSTEM_SETTINGS_PATH`. The native `agy` CLI does not consume
+that Gemini system-settings file. This fork now reads its `mcpServers` and
+writes a per-turn `~/.gemini/config/mcp_config.json` containing every
+bundled HTTP and stdio server (including headers, stdio arguments and
+environment variables). Header and stdio value placeholders use the run
+environment first, then the process environment; missing variables fail
+rather than silently authenticating with an empty value.
+
+The temporary `HOME` links the existing home files and the complete
+`.gemini/antigravity-cli` runtime back to their original locations.
+Native authentication, conversations, conversation summaries, brain,
+and runtime settings remain in their original files; the host's
+`mcp_config.json` is **never overwritten**. Existing manual native
+MCP entries are merged; an OpenClaw-bundled server wins on name conflict.
+The temporary overlay is removed after the turn. Ordinary runs remain
+unrestricted and should only be used with trusted MCP configurations;
+the overlay is a config translation, **not a security sandbox**.
+
+No overlay is created when OpenClaw supplies no bundled MCP servers.
+The exact tool-cap path remains independent: `prepareExactToolHome`
+continues to expose only the authorized OpenClaw MCP tools. Zero-tool
+and isolated completions never inherit bundled or manual MCP servers.
+The native `/compact` control skips regular bundle preparation and retains
+its existing checkpoint-verified resume behavior.

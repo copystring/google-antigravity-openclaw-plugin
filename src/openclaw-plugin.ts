@@ -1,8 +1,13 @@
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { validateNativeCompactionOutput } from './compact-protocol.js';
+import { prepareNormalMcpHome } from './bundled-mcp-home.js';
+import { makeAgyModelCatalogProvider, makeAgyProvider } from './agy-provider.js';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   chmod,
+  copyFile,
   mkdir,
   mkdtemp,
   readFile,
@@ -16,6 +21,7 @@ import {
 } from 'openclaw/plugin-sdk/plugin-entry';
 
 const BACKEND_ID = 'google-antigravity-cli';
+const LEGACY_BACKEND_ID = 'antigravity-cli';
 const DEFAULT_MODEL = 'gemini-3.8-flash-low';
 const require = createRequire(import.meta.url);
 
@@ -30,12 +36,65 @@ type ExactToolHome = {
   cleanup: () => Promise<void>;
 };
 
-const RUNTIME_STATE_PASSTHROUGH = [
+const AUTH_STATE_PASSTHROUGH = [
   'antigravity-oauth-token',
   'installation_id',
+] as const;
+
+const CONVERSATION_STATE_PASSTHROUGH = [
   'conversations',
   'conversation_summaries.db',
 ] as const;
+
+type IsolatedCompletionContext = {
+  isolatedCompletionPrompt?: string;
+  isolatedCompletionSystemPrompt?: string;
+  isolatedCompletionModelId?: string;
+};
+
+const AGY_INCLUDE_PATTERN =
+  /(?<!\\)@(?:(?:"(?:[^"]*)")|(?:\\.|[^ \t\n\r,;!?()[\]{}.]|\.(?!$|[ \t\n\r])))+/u;
+
+/**
+ * Return true only for OpenClaw's private isolated-completion request.
+ * Reject inputs that agy could interpret as a command or filesystem include.
+ */
+export function validateIsolatedCompletion(
+  ctx: IsolatedCompletionContext & {
+    modelId: string;
+    toolAvailability?: ToolAvailability;
+  },
+): boolean {
+  if (ctx.isolatedCompletionSystemPrompt === undefined) return false;
+  const { isolatedCompletionPrompt: prompt, isolatedCompletionSystemPrompt: systemPrompt } = ctx;
+  if (typeof prompt !== 'string') {
+    throw new Error('Isolated completion requires a literal prompt');
+  }
+  if (
+    !ctx.isolatedCompletionModelId ||
+    ctx.isolatedCompletionModelId === 'auto' ||
+    ctx.isolatedCompletionModelId.startsWith('auto-') ||
+    ctx.isolatedCompletionModelId !== ctx.modelId
+  ) {
+    throw new Error('Isolated completion requires one concrete matching model');
+  }
+  if (
+    !ctx.toolAvailability ||
+    ctx.toolAvailability.native.length !== 0 ||
+    ctx.toolAvailability.openClaw.length !== 0
+  ) {
+    throw new Error('Isolated completion requires exactly zero tools');
+  }
+  if (
+    [prompt, systemPrompt].some(
+      (value) => value.includes('\0') || AGY_INCLUDE_PATTERN.test(value),
+    ) ||
+    /^\s*[/!]/u.test(prompt)
+  ) {
+    throw new Error('Isolated completion rejected unsafe agy input syntax');
+  }
+  return true;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -96,6 +155,7 @@ export async function prepareExactToolHome(params: {
   env?: NodeJS.ProcessEnv;
   sourceHome?: string;
   temporaryRoot?: string;
+  isolatedCompletion?: boolean;
 }): Promise<ExactToolHome> {
   if (params.toolAvailability.native.length > 0) {
     throw new Error(
@@ -131,12 +191,25 @@ export async function prepareExactToolHome(params: {
     const targetRuntime = path.join(targetGemini, 'antigravity-cli');
     await mkdir(targetRuntime, { recursive: true, mode: 0o700 });
 
-    for (const entry of RUNTIME_STATE_PASSTHROUGH) {
-      await symlink(path.join(sourceRuntime, entry), path.join(targetRuntime, entry)).catch(
-        (error: NodeJS.ErrnoException) => {
-          if (error.code !== 'ENOENT') throw error;
-        },
-      );
+    // Copy credentials for isolated calls: never share mutable auth or history.
+    // Unrestricted turns retain the original state-link behavior.
+    const authEntries = [...AUTH_STATE_PASSTHROUGH];
+    const stateEntries = params.isolatedCompletion
+      ? authEntries
+      : [...authEntries, ...CONVERSATION_STATE_PASSTHROUGH];
+    for (const entry of stateEntries) {
+      const source = path.join(sourceRuntime, entry);
+      const target = path.join(targetRuntime, entry);
+      try {
+        if (params.isolatedCompletion) {
+          await copyFile(source, target);
+          await chmod(target, 0o600);
+        } else {
+          await symlink(source, target);
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
     }
 
     const settings = {
@@ -210,12 +283,6 @@ type ParsedEvent =
       kind: 'result';
       text?: string;
       sessionId?: string;
-      usage?: {
-        input?: number;
-        output?: number;
-        cacheRead?: number;
-        total?: number;
-      };
       errorText?: string;
     }
   | { kind: 'sessionId'; sessionId: string }
@@ -260,10 +327,12 @@ export function parseAntigravityJsonlEvent(line: string): ParsedEvent {
     };
   }
   if (event.type === 'result') {
-    const usage =
-      event.usage && typeof event.usage === 'object'
-        ? (event.usage as Record<string, unknown>)
-        : undefined;
+    // agy result usage aggregates a whole native conversation/turn (including
+    // cache reads across internal model calls). OpenClaw JSONL result usage
+    // means the latest model call's prompt context. Forwarding agy's counters
+    // there can claim millions of tokens of active context after /compact.
+    // Until the CLI exposes an authoritative latest-call context measurement,
+    // omit this field rather than inventing a fresh context snapshot.
     return {
       kind: 'result',
       text: typeof event.text === 'string' ? event.text : undefined,
@@ -271,44 +340,36 @@ export function parseAntigravityJsonlEvent(line: string): ParsedEvent {
         typeof event.conversation_id === 'string'
           ? event.conversation_id
           : undefined,
-      usage: usage
-        ? {
-            input:
-              typeof usage.input_tokens === 'number'
-                ? usage.input_tokens
-                : undefined,
-            output:
-              typeof usage.output_tokens === 'number'
-                ? usage.output_tokens
-                : undefined,
-            cacheRead:
-              typeof usage.cache_read_tokens === 'number'
-                ? usage.cache_read_tokens
-                : undefined,
-            total:
-              typeof usage.total_tokens === 'number'
-                ? usage.total_tokens
-                : undefined,
-          }
-        : undefined,
       errorText: typeof event.error === 'string' ? event.error : undefined,
     };
   }
   return null;
 }
 
-function buildBackend(): Parameters<OpenClawPluginApi['registerCliBackend']>[0] {
+function buildBackend(id: string = BACKEND_ID): Parameters<OpenClawPluginApi['registerCliBackend']>[0] {
   const cliPath = require.resolve('google-antigravity-acp/dist/one-shot-cli.js');
+  const compactCliPath = fileURLToPath(new URL('./compact-cli.js', import.meta.url));
+  const normalCliPath = fileURLToPath(new URL('./normal-cli.js', import.meta.url));
 
   return {
-    id: BACKEND_ID,
+    id,
+    // Legacy runs retain their original CLI backend id while sharing this provider.
     modelProvider: BACKEND_ID,
     bundleMcp: true,
     bundleMcpMode: 'gemini-system-settings',
     nativeToolMode: 'selectable',
     toolAvailabilityEnforcement: 'prepare-execution',
-    isolatesInstructionsWithExactTools: true,
     ownsNativeCompaction: true,
+    manualCompaction: {
+      buildPrompt: (customInstructions) => {
+        if (customInstructions?.trim()) {
+          throw new Error('Native Antigravity compaction currently supports bare /compact only');
+        }
+        return '/compact';
+      },
+      input: 'stdin',
+      validateOutput: validateNativeCompactionOutput,
+    },
     liveTest: {
       defaultModelRef: `${BACKEND_ID}/${DEFAULT_MODEL}`,
       defaultImageProbe: false,
@@ -336,8 +397,32 @@ function buildBackend(): Parameters<OpenClawPluginApi['registerCliBackend']>[0] 
     },
     resolveExecutionArgs(ctx) {
       const args = [...ctx.baseArgs];
+      if ((ctx as typeof ctx & { controlOperation?: 'compact' }).controlOperation === 'compact') {
+        if (!ctx.useResume || args[0] !== cliPath) {
+          throw new Error('Native Antigravity compaction requires a resumable CLI session');
+        }
+        if (ctx.toolAvailability?.native.length || ctx.toolAvailability?.openClaw.length) {
+          throw new Error('Native Antigravity compaction cannot run with exposed tools');
+        }
+        args[0] = compactCliPath;
+        return args;
+      }
+      const zeroTools =
+        ctx.toolAvailability?.native.length === 0 &&
+        ctx.toolAvailability?.openClaw.length === 0;
+      // A tool-free completion must never inherit an agy conversation.
+      if (
+        zeroTools &&
+        (ctx.useResume || args.some((arg) => arg.startsWith('--conversation')))
+      ) {
+        throw new Error('Tool-free Antigravity execution cannot resume conversations');
+      }
       if (ctx.toolAvailability) {
         args.push('--no-skip-permissions', '--disable-slash-commands');
+      } else {
+        // A process-level wrapper sees the final per-attempt MCP capture settings,
+        // unlike prepareExecution, which only sees the pre-capture bundle.
+        args[0] = normalCliPath;
       }
       const effort = ctx.thinkingLevel;
       if (effort === 'low' || effort === 'medium' || effort === 'high') {
@@ -346,20 +431,59 @@ function buildBackend(): Parameters<OpenClawPluginApi['registerCliBackend']>[0] 
       return args;
     },
     async prepareExecution(ctx) {
-      if (!ctx.toolAvailability) return;
+      // 2026.11.6 passes private isolated-completion fields not yet exposed
+      // by the public plugin SDK; do not advertise isolation for normal runs.
+      const isolated = validateIsolatedCompletion(
+        ctx as typeof ctx & IsolatedCompletionContext,
+      );
+      if (!ctx.toolAvailability) {
+        if (isolated) throw new Error('Isolated completion requires tool-free execution');
+        const normalHome = await prepareNormalMcpHome({
+          systemSettingsPath: ctx.env?.GEMINI_CLI_SYSTEM_SETTINGS_PATH,
+          env: ctx.env,
+        });
+        return normalHome ? {
+          env: {
+            HOME: normalHome.home,
+            OPENCLAW_ANTIGRAVITY_NORMAL_MCP_OVERLAY: '1',
+            OPENCLAW_ANTIGRAVITY_ORIGINAL_HOME: normalHome.sourceHome,
+          } as Record<string, string>,
+          cleanup: normalHome.cleanup,
+        } : undefined;
+      }
       const exactHome = await prepareExactToolHome({
         toolAvailability: ctx.toolAvailability,
         systemSettingsPath: ctx.env?.GEMINI_CLI_SYSTEM_SETTINGS_PATH,
         env: ctx.env,
+        isolatedCompletion: isolated,
       });
       return {
         env: {
           HOME: exactHome.home,
           OPENCLAW_ANTIGRAVITY_EXACT_TOOLS: '1',
           OPENCLAW_ANTIGRAVITY_EXACT_CWD: exactHome.workspace,
-        },
+          ...(isolated ? {
+            GEMINI_TELEMETRY_LOG_PROMPTS: 'false',
+            GEMINI_WRITE_SYSTEM_MD: 'false',
+          } : {}),
+        } as Record<string, string>,
+        ...(isolated ? {
+          clearEnv: [
+            'ANTIGRAVITY_USER_DATA_DIR',
+            'GEMINI_CLI_HOME',
+            'GEMINI_CLI_SYSTEM_SETTINGS_PATH',
+            'GEMINI_SYSTEM_MD',
+            'XDG_CONFIG_HOME',
+            'XDG_DATA_HOME',
+            'NODE_OPTIONS',
+            'NODE_PATH',
+            'GEMINI_TELEMETRY_LOG_PROMPTS',
+            'GEMINI_WRITE_SYSTEM_MD',
+          ],
+        } : {}),
         cleanup: exactHome.cleanup,
-        toolAvailabilityEnforced: true,
+        toolAvailabilityEnforced: true as const,
+        ...(isolated ? { isolatedCompletionEnforced: true as const } : {}),
       };
     },
     parseJsonlEvent: parseAntigravityJsonlEvent,
@@ -371,6 +495,11 @@ export default definePluginEntry({
   name: 'Google Antigravity CLI',
   description: 'Run Google Antigravity as a native OpenClaw CLI model backend',
   register(api) {
+    api.registerProvider(makeAgyProvider());
+    api.registerModelCatalogProvider(makeAgyModelCatalogProvider());
     api.registerCliBackend(buildBackend());
+    // Compatibility route for sessions bound to the retired cavi-ai backend.
+    // This registers no old model provider and does not rewrite session state.
+    api.registerCliBackend(buildBackend(LEGACY_BACKEND_ID));
   },
 });

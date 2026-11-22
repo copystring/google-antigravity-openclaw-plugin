@@ -160,6 +160,56 @@ describe('normal bundled MCP forwarding into agy', () => {
     }
   });
 
+  it('accepts an empty existing native MCP config but preserves the original file', async () => {
+    const f = await fixture();
+    let prepared: Prepared | undefined;
+    try {
+      await writeFile(path.join(f.configDir, 'mcp_config.json'), '');
+      prepared = await backend().prepareExecution({
+        modelId: 'gemini-4-neon-high',
+        env: { ...testEnv, HOME: f.sourceHome,
+          GEMINI_CLI_SYSTEM_SETTINGS_PATH: f.settingsPath },
+      });
+      const config = JSON.parse(await readFile(path.join(
+        prepared!.env!.HOME, '.gemini', 'config', 'mcp_config.json',
+      ), 'utf8'));
+      expect(Object.keys(config.mcpServers).sort())
+        .toEqual(['openclaw', 'thirdParty', 'stdioServer'].sort());
+      expect(await readFile(path.join(f.configDir, 'mcp_config.json'), 'utf8')).toBe('');
+    } finally {
+      await prepared?.cleanup?.();
+      await f.cleanup();
+    }
+  });
+
+  it('rejects broken OpenClaw MCP settings with the source path identified', async () => {
+    const f = await fixture();
+    try {
+      await writeFile(f.settingsPath, '');
+      await expect(backend().prepareExecution({
+        modelId: 'gemini-4-neon-high',
+        env: { HOME: f.sourceHome, GEMINI_CLI_SYSTEM_SETTINGS_PATH: f.settingsPath },
+      })).rejects.toThrow('Invalid JSON in MCP settings file: ' + f.settingsPath);
+    } finally {
+      await f.cleanup();
+    }
+  });
+
+  it('rejects malformed nonempty manual MCP config with the source path identified', async () => {
+    const f = await fixture();
+    const manualPath = path.join(f.configDir, 'mcp_config.json');
+    try {
+      await writeFile(manualPath, '{bad');
+      await expect(backend().prepareExecution({
+        modelId: 'gemini-4-neon-high',
+        env: { ...testEnv, HOME: f.sourceHome,
+          GEMINI_CLI_SYSTEM_SETTINGS_PATH: f.settingsPath },
+      })).rejects.toThrow('Invalid JSON in MCP settings file: ' + manualPath);
+    } finally {
+      await f.cleanup();
+    }
+  });
+
   it('does not create an overlay for a settings file without MCP servers', async () => {
     const f = await fixture();
     try {

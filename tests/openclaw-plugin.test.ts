@@ -81,29 +81,37 @@ describe('OpenClaw JSONL event parser', () => {
     });
   });
 
-  it('maps final usage, session, and errors', () => {
-    expect(
-      parseAntigravityJsonlEvent(
-        JSON.stringify({
-          type: 'result',
-          text: 'done',
-          conversation_id: 'conv-123',
-          usage: {
-            input_tokens: 10,
-            output_tokens: 3,
-            cache_read_tokens: 4,
-            total_tokens: 17,
-          },
-          error: 'optional error',
-        }),
-      ),
-    ).toEqual({
+  it('keeps session and errors but does not publish aggregate CLI token totals as live context', () => {
+    // agy usage spans multiple internal model calls, not the latest prompt.
+    const event = parseAntigravityJsonlEvent(
+      JSON.stringify({
+        type: 'result',
+        text: 'done',
+        conversation_id: 'conv-123',
+        usage: {
+          input_tokens: 572481,
+          output_tokens: 117436,
+          cache_read_tokens: 10433980,
+          total_tokens: 11123897,
+        },
+        error: 'optional error',
+      }),
+    );
+    expect(event).toEqual({
       kind: 'result',
       text: 'done',
       sessionId: 'conv-123',
-      usage: { input: 10, output: 3, cacheRead: 4, total: 17 },
       errorText: 'optional error',
     });
+    expect(event && 'usage' in event).toBe(false);
+  });
+
+  it('never promotes even small agy result usage to an unverified context snapshot', () => {
+    const event = parseAntigravityJsonlEvent(JSON.stringify({
+      type: 'result', text: 'ok', conversation_id: 'conv-small',
+      usage: { input_tokens: 120, output_tokens: 8, total_tokens: 128 },
+    }));
+    expect(event).toEqual({ kind: 'result', text: 'ok', sessionId: 'conv-small', errorText: undefined });
   });
 
   it('ignores malformed or unknown events', () => {

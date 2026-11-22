@@ -447,7 +447,7 @@ function buildBackend(id: string = BACKEND_ID): Parameters<OpenClawPluginApi['re
             HOME: normalHome.home,
             OPENCLAW_ANTIGRAVITY_NORMAL_MCP_OVERLAY: '1',
             OPENCLAW_ANTIGRAVITY_ORIGINAL_HOME: normalHome.sourceHome,
-          },
+          } as Record<string, string>,
           cleanup: normalHome.cleanup,
         } : undefined;
       }
@@ -466,7 +466,7 @@ function buildBackend(id: string = BACKEND_ID): Parameters<OpenClawPluginApi['re
             GEMINI_TELEMETRY_LOG_PROMPTS: 'false',
             GEMINI_WRITE_SYSTEM_MD: 'false',
           } : {}),
-        },
+        } as Record<string, string>,
         ...(isolated ? {
           clearEnv: [
             'ANTIGRAVITY_USER_DATA_DIR',

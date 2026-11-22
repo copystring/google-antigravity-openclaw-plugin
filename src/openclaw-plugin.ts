@@ -3,6 +3,7 @@ import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   chmod,
+  copyFile,
   mkdir,
   mkdtemp,
   readFile,
@@ -30,12 +31,65 @@ type ExactToolHome = {
   cleanup: () => Promise<void>;
 };
 
-const RUNTIME_STATE_PASSTHROUGH = [
+const AUTH_STATE_PASSTHROUGH = [
   'antigravity-oauth-token',
   'installation_id',
+] as const;
+
+const CONVERSATION_STATE_PASSTHROUGH = [
   'conversations',
   'conversation_summaries.db',
 ] as const;
+
+type IsolatedCompletionContext = {
+  isolatedCompletionPrompt?: string;
+  isolatedCompletionSystemPrompt?: string;
+  isolatedCompletionModelId?: string;
+};
+
+const AGY_INCLUDE_PATTERN =
+  /(?<!\\)@(?:(?:"(?:[^"]*)")|(?:\\.|[^ \t\n\r,;!?()[\]{}.]|\.(?!$|[ \t\n\r])))+/u;
+
+/**
+ * Return true only for OpenClaw's private isolated-completion request.
+ * Reject inputs that agy could interpret as a command or filesystem include.
+ */
+export function validateIsolatedCompletion(
+  ctx: IsolatedCompletionContext & {
+    modelId: string;
+    toolAvailability?: ToolAvailability;
+  },
+): boolean {
+  if (ctx.isolatedCompletionSystemPrompt === undefined) return false;
+  const { isolatedCompletionPrompt: prompt, isolatedCompletionSystemPrompt: systemPrompt } = ctx;
+  if (typeof prompt !== 'string') {
+    throw new Error('Isolated completion requires a literal prompt');
+  }
+  if (
+    !ctx.isolatedCompletionModelId ||
+    ctx.isolatedCompletionModelId === 'auto' ||
+    ctx.isolatedCompletionModelId.startsWith('auto-') ||
+    ctx.isolatedCompletionModelId !== ctx.modelId
+  ) {
+    throw new Error('Isolated completion requires one concrete matching model');
+  }
+  if (
+    !ctx.toolAvailability ||
+    ctx.toolAvailability.native.length !== 0 ||
+    ctx.toolAvailability.openClaw.length !== 0
+  ) {
+    throw new Error('Isolated completion requires exactly zero tools');
+  }
+  if (
+    [prompt, systemPrompt].some(
+      (value) => value.includes('\0') || AGY_INCLUDE_PATTERN.test(value),
+    ) ||
+    /^\s*[/!]/u.test(prompt)
+  ) {
+    throw new Error('Isolated completion rejected unsafe agy input syntax');
+  }
+  return true;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -96,6 +150,7 @@ export async function prepareExactToolHome(params: {
   env?: NodeJS.ProcessEnv;
   sourceHome?: string;
   temporaryRoot?: string;
+  isolatedCompletion?: boolean;
 }): Promise<ExactToolHome> {
   if (params.toolAvailability.native.length > 0) {
     throw new Error(
@@ -131,12 +186,25 @@ export async function prepareExactToolHome(params: {
     const targetRuntime = path.join(targetGemini, 'antigravity-cli');
     await mkdir(targetRuntime, { recursive: true, mode: 0o700 });
 
-    for (const entry of RUNTIME_STATE_PASSTHROUGH) {
-      await symlink(path.join(sourceRuntime, entry), path.join(targetRuntime, entry)).catch(
-        (error: NodeJS.ErrnoException) => {
-          if (error.code !== 'ENOENT') throw error;
-        },
-      );
+    // Copy credentials for isolated calls: never share mutable auth or history.
+    // Unrestricted turns retain the original state-link behavior.
+    const authEntries = [...AUTH_STATE_PASSTHROUGH];
+    const stateEntries = params.isolatedCompletion
+      ? authEntries
+      : [...authEntries, ...CONVERSATION_STATE_PASSTHROUGH];
+    for (const entry of stateEntries) {
+      const source = path.join(sourceRuntime, entry);
+      const target = path.join(targetRuntime, entry);
+      try {
+        if (params.isolatedCompletion) {
+          await copyFile(source, target);
+          await chmod(target, 0o600);
+        } else {
+          await symlink(source, target);
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
     }
 
     const settings = {
@@ -336,6 +404,16 @@ function buildBackend(): Parameters<OpenClawPluginApi['registerCliBackend']>[0] 
     },
     resolveExecutionArgs(ctx) {
       const args = [...ctx.baseArgs];
+      const zeroTools =
+        ctx.toolAvailability?.native.length === 0 &&
+        ctx.toolAvailability?.openClaw.length === 0;
+      // A tool-free completion must never inherit an agy conversation.
+      if (
+        zeroTools &&
+        (ctx.useResume || args.some((arg) => arg.startsWith('--conversation')))
+      ) {
+        throw new Error('Tool-free Antigravity execution cannot resume conversations');
+      }
       if (ctx.toolAvailability) {
         args.push('--no-skip-permissions', '--disable-slash-commands');
       }
@@ -346,20 +424,48 @@ function buildBackend(): Parameters<OpenClawPluginApi['registerCliBackend']>[0] 
       return args;
     },
     async prepareExecution(ctx) {
-      if (!ctx.toolAvailability) return;
+      // 2026.11.6 passes private isolated-completion fields not yet exposed
+      // by the public plugin SDK; do not advertise isolation for normal runs.
+      const isolated = validateIsolatedCompletion(
+        ctx as typeof ctx & IsolatedCompletionContext,
+      );
+      if (!ctx.toolAvailability) {
+        if (isolated) throw new Error('Isolated completion requires tool-free execution');
+        return;
+      }
       const exactHome = await prepareExactToolHome({
         toolAvailability: ctx.toolAvailability,
         systemSettingsPath: ctx.env?.GEMINI_CLI_SYSTEM_SETTINGS_PATH,
         env: ctx.env,
+        isolatedCompletion: isolated,
       });
       return {
         env: {
           HOME: exactHome.home,
           OPENCLAW_ANTIGRAVITY_EXACT_TOOLS: '1',
           OPENCLAW_ANTIGRAVITY_EXACT_CWD: exactHome.workspace,
+          ...(isolated ? {
+            GEMINI_TELEMETRY_LOG_PROMPTS: 'false',
+            GEMINI_WRITE_SYSTEM_MD: 'false',
+          } : {}),
         },
+        ...(isolated ? {
+          clearEnv: [
+            'ANTIGRAVITY_USER_DATA_DIR',
+            'GEMINI_CLI_HOME',
+            'GEMINI_CLI_SYSTEM_SETTINGS_PATH',
+            'GEMINI_SYSTEM_MD',
+            'XDG_CONFIG_HOME',
+            'XDG_DATA_HOME',
+            'NODE_OPTIONS',
+            'NODE_PATH',
+            'GEMINI_TELEMETRY_LOG_PROMPTS',
+            'GEMINI_WRITE_SYSTEM_MD',
+          ],
+        } : {}),
         cleanup: exactHome.cleanup,
-        toolAvailabilityEnforced: true,
+        toolAvailabilityEnforced: true as const,
+        ...(isolated ? { isolatedCompletionEnforced: true as const } : {}),
       };
     },
     parseJsonlEvent: parseAntigravityJsonlEvent,

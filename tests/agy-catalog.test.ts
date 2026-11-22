@@ -128,6 +128,8 @@ describe('live Antigravity model catalog', () => {
     const manifest = JSON.parse(await readFile(new URL('../openclaw.plugin.json', import.meta.url), 'utf8'));
     expect(manifest.modelCatalog.providers[AGY_PROVIDER_ID].models).toEqual([]);
     expect(manifest.modelCatalog.discovery[AGY_PROVIDER_ID]).toBe('refreshable');
+    expect(manifest.nonSecretAuthMarkers).toEqual(['antigravity-local-session']);
+    expect(manifest.providerCatalogEntry).toBe('./dist/provider-discovery.js');
     const spec = buildAgyProviderConfig([{ id: 'gemini-4-neon', name: 'Gemini 4 Neon' }]);
     expect(spec.agentRuntime).toEqual({ id: AGY_PROVIDER_ID });
     expect(spec.models[0].agentRuntime).toEqual({ id: AGY_PROVIDER_ID });

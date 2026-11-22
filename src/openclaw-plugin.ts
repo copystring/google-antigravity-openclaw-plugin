@@ -375,7 +375,6 @@ function buildBackend(): Parameters<OpenClawPluginApi['registerCliBackend']>[0] 
     bundleMcpMode: 'gemini-system-settings',
     nativeToolMode: 'selectable',
     toolAvailabilityEnforcement: 'prepare-execution',
-    isolatesInstructionsWithExactTools: true,
     ownsNativeCompaction: true,
     liveTest: {
       defaultModelRef: `${BACKEND_ID}/${DEFAULT_MODEL}`,

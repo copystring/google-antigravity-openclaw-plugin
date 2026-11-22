@@ -6,6 +6,7 @@ type JsonRecord = Record<string, unknown>;
 
 export type NormalMcpHome = {
   home: string;
+  sourceHome: string;
   configPath: string;
   cleanup: () => Promise<void>;
 };
@@ -144,6 +145,42 @@ async function symlinkChildren(
 }
 
 /**
+ * The Gateway rotates the bundled MCP capture header after prepareExecution.
+ * Re-materialize only the private overlay file using the final child environment.
+ * Never update the original user's mcp_config.json.
+ */
+export async function refreshNormalMcpHome(params: {
+  home: string;
+  sourceHome: string;
+  systemSettingsPath: string;
+  env: Readonly<Record<string, string>>;
+}): Promise<void> {
+  const settings = await readJsonObject(params.systemSettingsPath);
+  const servers = serverMap(settings, 'OpenClaw');
+  if (!servers || Object.keys(servers).length === 0) {
+    throw new Error('Final OpenClaw MCP bundle is missing all servers');
+  }
+  const bundled: JsonRecord = {};
+  for (const [name, value] of Object.entries(servers)) {
+    if (!isRecord(value)) throw new Error('Bundled MCP server ' + name + ' must be an object');
+    Object.defineProperty(bundled, name, {
+      value: convertBundledMcpServer(value, params.env),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  }
+  const originalConfigPath = path.join(
+    params.sourceHome, '.gemini', 'config', 'mcp_config.json',
+  );
+  const original = await readJsonObject(originalConfigPath, true);
+  const manualServers = serverMap(original, 'Antigravity') ?? {};
+  const merged = { ...original, mcpServers: { ...manualServers, ...bundled } };
+  const targetPath = path.join(params.home, '.gemini', 'config', 'mcp_config.json');
+  await writeFile(targetPath, JSON.stringify(merged, null, 2) + '\n', { mode: 0o600 });
+}
+
+/**
  * Overlay only ~/.gemini/config/mcp_config.json for unrestricted CLI turns.
  * Everything else in the original HOME, including the entire mutable agy runtime,
  * stays linked to the original location so resumed conversations and /compact work.
@@ -200,6 +237,7 @@ export async function prepareNormalMcpHome(params: {
     await writeFile(configPath, JSON.stringify(mergedSettings, null, 2) + '\n', { mode: 0o600 });
     return {
       home,
+      sourceHome,
       configPath,
       cleanup: () => rm(home, { recursive: true, force: true }),
     };

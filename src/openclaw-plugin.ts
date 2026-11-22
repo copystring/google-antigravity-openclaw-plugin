@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { validateNativeCompactionOutput } from './compact-protocol.js';
+import { prepareNormalMcpHome } from './bundled-mcp-home.js';
 import { makeAgyModelCatalogProvider, makeAgyProvider } from './agy-provider.js';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
@@ -432,7 +433,14 @@ function buildBackend(id: string = BACKEND_ID): Parameters<OpenClawPluginApi['re
       );
       if (!ctx.toolAvailability) {
         if (isolated) throw new Error('Isolated completion requires tool-free execution');
-        return;
+        const normalHome = await prepareNormalMcpHome({
+          systemSettingsPath: ctx.env?.GEMINI_CLI_SYSTEM_SETTINGS_PATH,
+          env: ctx.env,
+        });
+        return normalHome ? {
+          env: { HOME: normalHome.home },
+          cleanup: normalHome.cleanup,
+        } : undefined;
       }
       const exactHome = await prepareExactToolHome({
         toolAvailability: ctx.toolAvailability,

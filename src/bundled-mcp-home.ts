@@ -25,9 +25,18 @@ async function readJsonObject(filePath: string, allowMissing = false): Promise<J
     }
     throw error;
   }
-  const value: unknown = JSON.parse(text);
+  // A user-created native MCP config may legitimately be a zero-byte placeholder.
+  // Only optional native files may be treated as empty; a generated OpenClaw
+  // bundle must never silently become an unconfigured MCP surface.
+  if (allowMissing && text.trim().length === 0) return {};
+  let value: unknown;
+  try {
+    value = JSON.parse(text) as unknown;
+  } catch (error) {
+    throw new Error('Invalid JSON in MCP settings file: ' + filePath, { cause: error });
+  }
   if (!isRecord(value)) {
-    throw new Error('Expected a JSON object in Antigravity MCP settings');
+    throw new Error('Expected a JSON object in MCP settings file: ' + filePath);
   }
   return value;
 }

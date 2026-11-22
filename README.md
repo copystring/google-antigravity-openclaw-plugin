@@ -144,3 +144,32 @@ still preserves the session and does not synthesize a fake token count.
 OpenClaw metadata fields such as `contextTokens` can reflect previously
 selected runtimes. The Gemini model-catalog context size is an estimate,
 not a value returned by the CLI's model discovery endpoint.
+
+## Unrestricted Antigravity MCP bridging
+
+For ordinary turns, OpenClaw 2026.11.6 bundles the enabled OpenClaw MCP
+loopback server and user MCP servers into the JSON file referenced by
+`GEMINI_CLI_SYSTEM_SETTINGS_PATH`. The native `agy` CLI does not consume
+that Gemini system-settings file. This fork now reads its `mcpServers` and
+writes a per-turn `~/.gemini/config/mcp_config.json` containing every
+bundled HTTP and stdio server (including headers, stdio arguments and
+environment variables). Header and stdio value placeholders use the run
+environment first, then the process environment; missing variables fail
+rather than silently authenticating with an empty value.
+
+The temporary `HOME` links the existing home files and the complete
+`.gemini/antigravity-cli` runtime back to their original locations.
+Native authentication, conversations, conversation summaries, brain,
+and runtime settings remain in their original files; the host's
+`mcp_config.json` is **never overwritten**. Existing manual native
+MCP entries are merged; an OpenClaw-bundled server wins on name conflict.
+The temporary overlay is removed after the turn. Ordinary runs remain
+unrestricted and should only be used with trusted MCP configurations;
+the overlay is a config translation, **not a security sandbox**.
+
+No overlay is created when OpenClaw supplies no bundled MCP servers.
+The exact tool-cap path remains independent: `prepareExactToolHome`
+continues to expose only the authorized OpenClaw MCP tools. Zero-tool
+and isolated completions never inherit bundled or manual MCP servers.
+The native `/compact` control skips regular bundle preparation and retains
+its existing checkpoint-verified resume behavior.
